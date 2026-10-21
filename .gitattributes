@@ -1,0 +1,35 @@
+# Line endings.
+#
+# The Windows Git installer sets core.autocrlf=true in the *system* gitconfig,
+# so a clone or checkout on Windows would turn these into CRLF and break them:
+#
+#   build.sh / install.sh   ->  bad interpreter: /bin/sh^M
+#   Makefile                ->  missing separator
+#
+# Pinning eol=lf here wins over whatever the person cloning has configured, on
+# every platform.
+*.sh      text eol=lf
+Makefile  text eol=lf
+
+# Everything else: normalise to LF in the repository, check out natively.
+* text=auto
+
+# Images and other binary assets. Never let git guess, and never let it run
+# these through the line-ending filter.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.webp  binary
+*.pdf   binary
+
+# Compiled output. .gitignore already keeps these out of the repository, but
+# the rules below are the belt to that pair of braces: if one is ever tracked
+# on purpose, git must not push 8 MB of machine code through a text filter.
+*.exe   binary
+*.dll   binary
+*.so    binary
+*.dylib binary
+dist/** binary
+bin/**  binary

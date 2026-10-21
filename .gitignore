@@ -1,0 +1,45 @@
+# MatchTUI
+#
+# Build output. `make build` writes bin/; build.sh, build.ps1 and
+# `make release` write dist/. Both are reproducible from source with one
+# command, so neither is ever committed.
+/bin/
+/dist/
+
+# A binary that lands outside those directories: `go install .` puts one in
+# GOPATH, and a stray `go build` drops one next to the sources.
+/matchtui
+/matchtui.exe
+matchtui-linux-*
+matchtui-macos-*
+
+# Compiled libraries, should any dependency ever need cgo.
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test and coverage output.
+*.test
+*.out
+coverage.html
+
+# A local config file. The app keeps the real one in the OS config directory,
+# so this only catches an accidental copy dropped into the repo - it matters
+# because the file can hold an API-FOOTBALL key.
+config.json
+
+# Editors and IDEs.
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Operating system noise.
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+.AppleDouble
+.LSOverride
