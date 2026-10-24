@@ -412,8 +412,35 @@ func (a *App) closeDetail() {
 	a.pendingG = false
 }
 
-// detailPageSize is how many lines one page of the match page scrolls.
+// detailPageSize is how many lines one page of the match panel scrolls.
 func (a *App) detailPageSize() int { return maxInt(3, a.height-12) }
+
+// detailPanelWidth is the width of the match panel. On a roomy terminal it
+// takes about two thirds of the screen so the list stays readable beside it;
+// on a phone sized terminal (Termux in portrait) it takes the whole width.
+func (a *App) detailPanelWidth() int {
+	if a.width < 88 {
+		return a.width
+	}
+	return clamp(a.width*2/3, 44, a.width-32)
+}
+
+// compact reports whether the terminal is too narrow for side by side columns,
+// which is the Termux portrait case.
+func (a *App) compact() bool { return a.width < 76 }
+
+// cramped reports whether the terminal is too short for a two line footer.
+func (a *App) cramped() bool { return a.height < 16 }
+
+// atWidth runs a render pass at a different width, so the list column beside
+// the match panel can be drawn with its own layout maths.
+func (a *App) atWidth(w int, fn func() string) string {
+	saved := a.width
+	a.width = w
+	out := fn()
+	a.width = saved
+	return out
+}
 
 // scrollDetail moves the match page viewport; the renderer clamps it against
 // the real content height on the next frame.

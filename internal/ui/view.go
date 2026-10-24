@@ -13,7 +13,7 @@ import (
 )
 
 // Version is reported in the header and --version output.
-const Version = "1.0.0"
+const Version = "1.1.0"
 
 // View renders the whole frame.
 func (a *App) View() string {
@@ -24,20 +24,17 @@ func (a *App) View() string {
 		return a.theme.faintText.Render("starting MatchTUI…")
 	}
 
-	head := lipgloss.JoinVertical(lipgloss.Left, a.headerLine(), a.tabLine())
-	if line := a.filterLine(); line != "" {
-		head = lipgloss.JoinVertical(lipgloss.Left, head, line)
-	}
-	if line := a.bannerLine(); line != "" {
-		head = lipgloss.JoinVertical(lipgloss.Left, head, line)
-	}
-
-	// The match page owns the whole terminal: the score stays pinned at the
-	// top and everything else scrolls beneath it.
+	// The match panel lives beside the list: enter opens it on the right and
+	// the list underneath keeps working.
 	if a.detail && a.menu == menuNone {
-		return a.fitFrame(a.matchPageView())
+		return a.fitFrame(a.detailSplitView())
 	}
 
+	if a.menu == menuNone {
+		return a.fitFrame(a.listViewFrame())
+	}
+
+	head := a.headView()
 	footer := a.footerView()
 	bodyH := a.height - lipgloss.Height(head) - lipgloss.Height(footer)
 	if bodyH < 3 {
@@ -52,13 +49,35 @@ func (a *App) View() string {
 		body = a.centered(a.leagueMenuView(), bodyH)
 	case menuHelp:
 		body = a.centered(a.helpView(), bodyH)
-	case menuKey:
-		body = a.centered(a.keyPromptView(), bodyH)
 	default:
-		body = a.mainView(bodyH)
+		body = a.centered(a.keyPromptView(), bodyH)
 	}
 
 	return a.fitFrame(lipgloss.JoinVertical(lipgloss.Left, head, body, footer))
+}
+
+// listViewFrame renders the list screen at the current width: header, tabs,
+// match list and footer.
+func (a *App) listViewFrame() string {
+	head := a.headView()
+	footer := a.footerView()
+	bodyH := a.height - lipgloss.Height(head) - lipgloss.Height(footer)
+	if bodyH < 3 {
+		bodyH = 3
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, head, a.mainView(bodyH), footer)
+}
+
+// headView stacks the header, tab bar and any filter or status line.
+func (a *App) headView() string {
+	head := lipgloss.JoinVertical(lipgloss.Left, a.headerLine(), a.tabLine())
+	if line := a.filterLine(); line != "" {
+		head = lipgloss.JoinVertical(lipgloss.Left, head, line)
+	}
+	if line := a.bannerLine(); line != "" {
+		head = lipgloss.JoinVertical(lipgloss.Left, head, line)
+	}
+	return head
 }
 
 // fitFrame clips the rendered frame to the terminal so a long label can never
@@ -89,8 +108,7 @@ func (a *App) panelWidth() int { return minInt(a.width-2, 76) }
 // ---- header ---------------------------------------------------------------
 
 func (a *App) headerLine() string {
-	left := "⚽ " + a.theme.title.Render("MatchTUI") +
-		"  " + a.theme.footerDim.Render("v"+Version)
+	left := "⚽ " + a.theme.title.Render("MatchTUI")
 	right := a.providerChip()
 	return fit(left, maxInt(0, a.width-width(right))) + right
 }
@@ -100,11 +118,7 @@ func (a *App) providerChip() string {
 	if a.active.NeedsKey() && !a.active.KeyPresent() {
 		return a.theme.chipWarn.Render("no key · press p")
 	}
-	label := a.active.Name()
-	if hint := a.active.RateHint(); hint > 0 {
-		label += " · max " + humanDuration(hint)
-	}
-	return a.theme.chip.Render(label)
+	return a.theme.chip.Render(a.active.Name())
 }
 
 // tabLine draws the tab bar with live counts, and the clock on the right.
@@ -126,6 +140,10 @@ func (a *App) tabLine() string {
 	}
 	left := strings.Join(parts, " ")
 	right := a.clockLine()
+	// The clock is decoration: it steps aside when the tab bar needs the room.
+	if room := a.width - width(left) - width(right); room < 6 {
+		return trunc(left, a.width)
+	}
 	return fit(left, maxInt(0, a.width-width(right))) + right
 }
 
@@ -135,7 +153,10 @@ func (a *App) clockLine() string {
 	if a.loading {
 		return a.theme.faintText.Render(a.spin.View() + " updating")
 	}
-	parts := []string{a.now.Format("Mon 2 Jan"), a.now.Format("15:04")}
+	parts := []string{a.now.Format("15:04")}
+	if !a.compact() {
+		parts = append([]string{a.now.Format("Mon 2 Jan")}, parts...)
+	}
 	switch a.tab {
 	case tabUpcoming, tabResults:
 		parts = append(parts, a.windowLabel())
@@ -210,9 +231,14 @@ func (a *App) mainView(h int) string {
 	return a.renderList(a.width, h)
 }
 
-// teamColumnWidth sizes the team columns from the terminal width.
+// teamColumnWidth sizes the team columns from the terminal width. A cramped
+// column beside the match panel drops the competition column to give the team
+// names the room they need.
 func (a *App) teamColumnWidth(listW int) int {
-	return clamp((listW-40)/2, 8, 22)
+	if a.compact() {
+		return clamp((listW-22)/2, 6, 16)
+	}
+	return clamp((listW-46)/2, 8, 24)
 }
 
 // renderList draws the visible slice of matches with group headers.
@@ -319,9 +345,14 @@ func stateGroup(m model.Match) string {
 }
 
 // rowFor renders one match as a fixed set of columns inside a list of the
-// given width.
+// given width. The columns are spaced out rather than packed, so a row reads
+// as status, teams around the score, then the competition.
 func (a *App) rowFor(m model.Match, teamW, listW int, selected bool) string {
-	const stW, scoreW = 7, 9
+	const scoreW = 9
+	stW := 7
+	if a.compact() {
+		stW = 5
+	}
 	t := a.theme
 
 	star := " "
@@ -355,6 +386,11 @@ func (a *App) rowFor(m model.Match, teamW, listW int, selected bool) string {
 	if m.State.Upcoming() && m.Round != "" {
 		meta = joinNonEmpty(" · ", meta, m.Round)
 	}
+	if a.compact() {
+		// No room for the competition column: the group header already names
+		// it, so that width goes to the team names instead.
+		meta = ""
+	}
 
 	teamStyle := t.team
 	scoreStyle := t.score
@@ -377,11 +413,13 @@ func (a *App) rowFor(m model.Match, teamW, listW int, selected bool) string {
 	}
 
 	row := starStyle.Render(star) + " " +
-		statusStyle.Render(fit(trunc(status, stW), stW)) + " " +
-		padLeft(homeStyle.Render(trunc(m.Home.Label(a.width >= 130), teamW)), teamW) + " " +
-		scoreStyle.Render(fit(trunc(mid, scoreW-1), scoreW-1)) + " " +
-		awayStyle.Render(fit(trunc(m.Away.Label(a.width >= 130), teamW), teamW)) + " " +
-		metaStyle.Render(trunc(meta, a.rowMetaWidth(teamW, listW)))
+		statusStyle.Render(fit(trunc(status, stW), stW)) + "  " +
+		homeStyle.Render(fit(trunc(m.Home.Label(!a.compact()), teamW), teamW)) + "  " +
+		scoreStyle.Width(scoreW).Align(lipgloss.Center).Render(trunc(mid, scoreW)) + "  " +
+		awayStyle.Render(fit(trunc(m.Away.Label(!a.compact()), teamW), teamW))
+	if metaW := a.rowMetaWidth(teamW, listW, stW); meta != "" && metaW > 0 {
+		row += "  " + metaStyle.Render(trunc(meta, metaW))
+	}
 
 	if selected {
 		return t.listSel.Render(row)
@@ -389,11 +427,10 @@ func (a *App) rowFor(m model.Match, teamW, listW int, selected bool) string {
 	return row
 }
 
-// rowMetaWidth is the space left for the league and venue column. The fixed
-// columns are star(1)+gap+status(7)+gap+home(teamW)+gap+score(8)+gap+
-// away(teamW)+gap, which is 22 + 2*teamW cells.
-func (a *App) rowMetaWidth(teamW, listW int) int {
-	return maxInt(8, listW-(22+2*teamW))
+// rowMetaWidth is the space left for the league and venue column once the
+// fixed columns are laid out: star(1)+gap+status+2+home+2+score(9)+2+away.
+func (a *App) rowMetaWidth(teamW, listW, stW int) int {
+	return maxInt(0, listW-(stW+2*teamW+19))
 }
 
 // emptyList explains why there is nothing to show and how to change that.
@@ -422,26 +459,45 @@ func (a *App) emptyList(w, h int) string {
 	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, box)
 }
 
-// ---- match page -----------------------------------------------------------
+// ---- match panel ----------------------------------------------------------
 
-// matchPageView renders the full-screen fixture view: a scoreboard pinned to
-// the top, with the timeline, statistics and team sheets scrolling under it.
-func (a *App) matchPageView() string {
+// detailSplitView lays the screen out as the list on the left and the match
+// panel on the right, taking roughly two thirds of the width. Terminals too
+// narrow for a useful list column (Termux in portrait) get the panel alone.
+func (a *App) detailSplitView() string {
+	panelW := a.detailPanelWidth()
+	listW := a.width - panelW
+	if listW < 30 {
+		return a.detailPanelView(panelW, a.height)
+	}
+	left := a.atWidth(listW, a.listViewFrame)
+	right := a.detailPanelView(panelW, a.height)
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, right)
+}
+
+// detailPanelView renders the match panel: a compact scoreboard pinned at the
+// top, the fixture's timeline, statistics and team sheets scrolling beneath it,
+// and a single hint line at the bottom.
+func (a *App) detailPanelView(w, h int) string {
 	t := a.theme
 	m, ok := a.openMatch()
 	if !ok {
 		return t.empty.Render("Select a match to see details")
 	}
 
-	head := a.scoreHeader(m)
-	foot := a.matchPageFooter()
-	// The footer is always two lines; the body takes everything else.
-	avail := a.height - lipgloss.Height(head) - 2
+	inner := w - 4 // rounded border plus one cell of padding on each side
+	if inner < 12 {
+		inner = 12
+	}
+	head := a.panelHeader(m, inner)
+	foot := a.panelFooter()
+
+	avail := h - 2 - lipgloss.Height(head) - lipgloss.Height(foot)
 	if avail < 3 {
 		avail = 3
 	}
 
-	lines := a.matchBody(m)
+	lines := a.matchBody(m, inner)
 	a.detailTotal = len(lines)
 	if a.detailScroll > len(lines)-avail {
 		a.detailScroll = maxInt(0, len(lines)-avail)
@@ -453,7 +509,7 @@ func (a *App) matchPageView() string {
 	end := minInt(a.detailScroll+avail, len(lines))
 	visible := make([]string, 0, avail)
 	for i := a.detailScroll; i < end; i++ {
-		visible = append(visible, lines[i])
+		visible = append(visible, trunc(lines[i], inner))
 	}
 	// Record what is actually on screen so the footer can report it.
 	a.detailFrom, a.detailTo = 0, 0
@@ -467,16 +523,19 @@ func (a *App) matchPageView() string {
 	// A thin scrollbar on the right edge when there is more below the fold.
 	body := strings.Join(visible, "\n")
 	if len(lines) > avail {
-		body = a.attachScrollbar(body, len(lines), avail)
+		body = a.attachScrollbar(body, len(lines), avail, inner)
 	}
+
 	// The footer is rendered after the body so it can report the real window.
-	foot = a.matchPageFooter()
-	return lipgloss.JoinVertical(lipgloss.Left, head, body, foot)
+	foot = a.panelFooter()
+	// The box width covers its own padding; the border sits outside it.
+	return t.panelBox.Width(inner + 2).Render(
+		head + "\n" + body + "\n" + trunc(foot, inner))
 }
 
 // attachScrollbar draws a one cell column on the right showing how far down the
 // visible window sits in the document.
-func (a *App) attachScrollbar(body string, total, avail int) string {
+func (a *App) attachScrollbar(body string, total, avail, w int) string {
 	rows := strings.Split(body, "\n")
 	thumbH := maxInt(1, avail*avail/total)
 	top := 0
@@ -491,32 +550,27 @@ func (a *App) attachScrollbar(body string, total, avail int) string {
 		bar[top+i] = a.theme.barFill.Render(" ")
 	}
 	for i, row := range rows {
-		rows[i] = trunc(row, a.width-1) + bar[i]
+		rows[i] = trunc(row, w-1) + bar[i]
 	}
 	return strings.Join(rows, "\n")
 }
 
-// scoreHeader is the pinned scoreboard: team names on the outer edges, the
-// scoreline in the middle, and the competition plus state above and below.
-func (a *App) scoreHeader(m model.Match) string {
+// panelHeader is the scoreboard pinned to the top of the panel: competition and
+// round, then the two sides on either side of the scoreline, then the state.
+func (a *App) panelHeader(m model.Match, w int) string {
 	t := a.theme
-	w := a.width
-	sideW := maxInt(8, (w-24)/2)
-	scoreW := 24
 
 	homeStyle, awayStyle := t.team, t.team
 	if m.State.Finished() {
 		// The winning side keeps full contrast, the loser dims.
 		switch {
 		case m.Home.Winner && !m.Away.Winner:
-			homeStyle = t.teamWin
+			awayStyle = t.teamLose
 		case m.Away.Winner && !m.Home.Winner:
-			awayStyle = t.teamWin
+			homeStyle = t.teamLose
 		default:
 			homeStyle, awayStyle = t.teamLose, t.teamLose
 		}
-	} else if m.State.Upcoming() {
-		homeStyle, awayStyle = t.team, t.team
 	}
 
 	score := m.ScoreLine()
@@ -525,34 +579,60 @@ func (a *App) scoreHeader(m model.Match) string {
 		score = m.KickoffLabel("15:04")
 	}
 
-	// Left half is right-aligned toward the score, right half is left-aligned.
-	left := padLeft(homeStyle.Render(trunc(m.Home.Label(true), sideW)), sideW)
-	right := padRight(awayStyle.Render(trunc(m.Away.Label(true), sideW)), sideW)
-	mid := t.score.Width(scoreW).Align(lipgloss.Center).Render(score)
+	sideW := maxInt(6, (w-16)/2)
+	scoreW := w - 2*sideW
 
 	lines := []string{
-		t.panelTitle.Align(lipgloss.Center).Width(w).
-			Render(trunc(joinNonEmpty(" · ", m.League, m.Round), w)),
-		lipgloss.JoinHorizontal(lipgloss.Top, left, mid, right),
-		a.statusFor(m).Align(lipgloss.Center).Width(w).Render(trunc(a.detailStatusLine(m), w)),
+		t.faintText.Render(trunc(joinNonEmpty(" · ", m.League, m.Round), w)),
+		lipgloss.JoinHorizontal(lipgloss.Top,
+			padLeft(homeStyle.Render(trunc(m.Home.Label(true), sideW)), sideW),
+			t.score.Width(scoreW).Align(lipgloss.Center).Render(score),
+			padRight(awayStyle.Render(trunc(m.Away.Label(true), sideW)), sideW)),
+		a.statusFor(m).Render(trunc(a.detailStatusLine(m), w)),
 	}
-
 	if m.State.Finished() && (m.Home.ScoreHT != 0 || m.Away.ScoreHT != 0) {
-		lines = append(lines, t.faintText.Align(lipgloss.Center).Width(w).
-			Render(fmt.Sprintf("half time %d-%d", m.Home.ScoreHT, m.Away.ScoreHT)))
+		lines = append(lines, t.faintText.Render(
+			trunc(fmt.Sprintf("half time %d-%d", m.Home.ScoreHT, m.Away.ScoreHT), w)))
 	}
 	if venue := joinNonEmpty(" · ", m.Venue, m.City); venue != "" {
-		lines = append(lines, t.faintText.Align(lipgloss.Center).Width(w).Render(trunc(venue, w)))
+		lines = append(lines, t.faintText.Render(trunc(venue, w)))
 	}
 	if len(m.Broadcast) > 0 {
-		lines = append(lines, t.faintText.Align(lipgloss.Center).Width(w).
-			Render(trunc(strings.Join(m.Broadcast, " · "), w)))
+		lines = append(lines, t.faintText.Render(trunc(strings.Join(m.Broadcast, " · "), w)))
 	}
-	if starred := a.stars[m.Key()]; starred {
-		lines = append(lines, t.star.Align(lipgloss.Center).Width(w).Render("* starred"))
-	}
-	lines = append(lines, t.dimmed.Align(lipgloss.Center).Width(w).Render(strings.Repeat("─", maxInt(0, w))))
+	lines = append(lines, t.dimmed.Render(strings.Repeat("─", w)))
 	return strings.Join(lines, "\n")
+}
+
+// panelFooter is the hint line drawn at the bottom of the match panel. Hints
+// that do not fit are dropped whole rather than cut mid word.
+func (a *App) panelFooter() string {
+	t := a.theme
+	rows := []hint{
+		{"esc", "close"}, {"j k", "scroll"}, {"s", "star"}, {"r", "refresh"},
+	}
+	parts := make([]string, 0, len(rows)*2)
+	line := ""
+	for i, h := range rows {
+		candidate := h.k + " " + h.d
+		if i > 0 {
+			candidate = "  " + candidate
+		}
+		if width(line)+width(candidate) > a.width {
+			break
+		}
+		if i > 0 {
+			parts = append(parts, t.footerDim.Render("  "))
+		}
+		parts = append(parts, t.footerKey.Render(h.k), t.footer.Render(" "+h.d))
+		line += candidate
+	}
+	prog := ""
+	if a.detailTotal > 0 && a.detailTo > 0 {
+		prog = "  " + fmt.Sprintf("%d-%d/%d", a.detailFrom, a.detailTo, a.detailTotal)
+	}
+	return trunc(strings.Join(parts, "")+
+		t.footerDim.Render(prog), a.width)
 }
 
 // statusFor picks the lifecycle style for the match page header.
@@ -567,37 +647,160 @@ func (a *App) statusFor(m model.Match) lipgloss.Style {
 	}
 }
 
-// matchBody builds the scrollable document: timeline, statistics, team sheets.
-func (a *App) matchBody(m model.Match) []string {
-	t := a.theme
-	w := a.width
+// matchBody builds the scrollable document behind the scoreboard. Everything
+// that compares the two sides is laid out as two columns, home on the left and
+// away on the right, so a reader never has to scan a single long line.
+func (a *App) matchBody(m model.Match, w int) []string {
 	var lines []string
 
 	// Fixtures that have not kicked off have no timeline or statistics yet;
 	// lead with what there is rather than an empty block.
 	if m.State != model.StateScheduled {
-		lines = append(lines, t.group.Render("Timeline"))
-		if len(m.Events) == 0 {
-			lines = append(lines, t.faintText.Render("  No goals or cards reported yet."))
-		}
-		for _, e := range m.Events {
-			lines = append(lines, a.timelineLine(e, m, w))
-		}
+		lines = append(lines, a.timelineSection(m, w)...)
 		lines = append(lines, "")
-
-		lines = append(lines, t.group.Render("Statistics"))
-		if len(m.Stats) == 0 {
-			lines = append(lines, t.faintText.Render("  No statistics for this fixture."))
-		}
-		for _, s := range m.Stats {
-			lines = append(lines, a.statLine(s, w))
-		}
+		lines = append(lines, a.statSection(m, w)...)
 		lines = append(lines, "")
 	}
 
-	lines = append(lines, t.group.Render("Team sheets"))
+	lines = append(lines, a.theme.group.Render("Team sheets"))
 	lines = append(lines, a.lineupLines(m, w)...)
 	return lines
+}
+
+// split reports whether two team columns fit side by side in w cells.
+func split(w int) bool { return w >= 60 }
+
+// teamColumns splits w cells into two columns joined by a divider.
+func teamColumns(w int) int { return (w - 3) / 2 }
+
+// sideHead renders the two team names over a pair of columns.
+func (a *App) sideHead(m model.Match, colW int) string {
+	t := a.theme
+	left := t.teamSel.Render(trunc(m.Home.Label(true), colW))
+	right := t.teamSel.Render(trunc(m.Away.Label(true), colW))
+	return padLeft(left, colW) + t.dimmed.Render(" │ ") + padRight(right, colW)
+}
+
+// ---- timeline -------------------------------------------------------------
+
+// timelineSection renders the goals and cards as one column per team.
+func (a *App) timelineSection(m model.Match, w int) []string {
+	t := a.theme
+	out := []string{t.group.Render("Timeline")}
+	if len(m.Events) == 0 {
+		return append(out, t.faintText.Render("  No goals or cards reported yet."))
+	}
+	if !split(w) {
+		for _, e := range m.Events {
+			out = append(out, a.eventCell(e, w))
+		}
+		return out
+	}
+
+	var home, away []model.Event
+	for _, e := range m.Events {
+		if e.TeamID == m.Away.ID {
+			away = append(away, e)
+			continue
+		}
+		home = append(home, e)
+	}
+
+	colW := teamColumns(w)
+	out = append(out, a.sideHead(m, colW))
+	rows := maxInt(len(home), len(away))
+	for i := 0; i < rows; i++ {
+		l, r := "", ""
+		if i < len(home) {
+			l = a.eventCell(home[i], colW)
+		}
+		if i < len(away) {
+			r = a.eventCell(away[i], colW)
+		}
+		out = append(out, padLeft(trunc(l, colW), colW)+
+			t.dimmed.Render(" │ ")+padRight(trunc(r, colW), colW))
+	}
+	return out
+}
+
+// eventCell renders one goal or card: minute, kind, player and the running
+// score for anything that changed it.
+func (a *App) eventCell(e model.Event, w int) string {
+	t := a.theme
+	const minW, kindW = 4, 9
+
+	kind := e.Kind.Label()
+	switch {
+	case e.Kind == model.EventGoal && e.Penalty:
+		kind = "PEN"
+	case e.Kind == model.EventGoal && e.OwnGoal:
+		kind = "OWN"
+	}
+	style := t.tlGoal
+	if !e.Kind.Scoring() {
+		style = t.tlCard
+	}
+
+	score := ""
+	if e.Kind.Scoring() && e.Score != "" {
+		score = " " + e.Score
+	}
+	nameW := maxInt(4, w-minW-kindW-width(score)-4)
+
+	return t.tlMinute.Render(fit(trunc(e.Minute, minW), minW)) + " " +
+		style.Render(fit(trunc(kind, kindW), kindW)) + " " +
+		t.team.Render(fit(trunc(e.Player, nameW), nameW)) +
+		t.tlScore.Render(score)
+}
+
+// ---- statistics -----------------------------------------------------------
+
+// statSection renders the match statistics with each side's value on its own
+// edge of the line and a mirrored bar in between.
+func (a *App) statSection(m model.Match, w int) []string {
+	t := a.theme
+	out := []string{t.group.Render("Statistics")}
+	if len(m.Stats) == 0 {
+		return append(out, t.faintText.Render("  No statistics for this fixture."))
+	}
+	if !split(w) {
+		for _, s := range m.Stats {
+			out = append(out, a.statRow(s, w))
+		}
+		return out
+	}
+
+	colW := teamColumns(w)
+	out = append(out, a.sideHead(m, colW))
+	for _, s := range m.Stats {
+		out = append(out, a.statRow(s, w))
+	}
+	return out
+}
+
+// statRow renders one statistic: the home value on the left edge, the away
+// value on the right, and a pair of mirrored bars showing the share between
+// them with the label in the middle.
+func (a *App) statRow(s model.Stat, w int) string {
+	t := a.theme
+	const valW = 5
+	labelW := clamp(w/4, 10, 18)
+	barW := (w - 2*valW - labelW - 6) / 2
+
+	home := padLeft(trunc(s.Home, valW), valW)
+	away := padRight(trunc(s.Away, valW), valW)
+	label := t.statLabel.Render(fit(trunc(s.Label, labelW), labelW))
+
+	if barW < 4 {
+		return " " + home + "  " + label + "  " + away
+	}
+	total := s.HomeVal + s.AwayVal
+	ratio := 0.5
+	if total > 0 {
+		ratio = s.HomeVal / total
+	}
+	return " " + home + " " + t.bar(ratio, barW) + " " + label + " " +
+		t.barMirror(ratio, barW) + " " + away
 }
 
 // lineupLines renders both team sheets, side by side on wide terminals and
@@ -617,8 +820,8 @@ func (a *App) lineupLines(m model.Match, w int) []string {
 		return a.oneLineup(away, w)
 	}
 
-	if w >= 96 {
-		colW := (w - 3) / 2
+	if split(w) {
+		colW := teamColumns(w)
 		left := a.oneLineup(home, colW)
 		right := a.oneLineup(away, colW)
 		n := maxInt(len(left), len(right))
@@ -699,10 +902,10 @@ func (a *App) oneLineup(l model.Lineup, w int) []string {
 // in-match substitution they were involved in.
 func (a *App) playerLine(p model.Player, w int) string {
 	t := a.theme
-	const numW, posW = 4, 5
-	nameW := maxInt(6, w-numW-posW-5)
+	const numW, posW = 3, 5
+	nameW := maxInt(6, w-numW-posW-6)
 
-	mark := "  "
+	mark := "   "
 	switch {
 	case p.SubIn && p.SubOut:
 		mark = t.warn.Render(" ↔ ")
@@ -713,7 +916,7 @@ func (a *App) playerLine(p model.Player, w int) string {
 	}
 
 	return " " + t.footerKey.Render(padLeft(trunc(p.Number, numW), numW)) + " " +
-		mark + " " + t.team.Render(padRight(trunc(p.Name, nameW), nameW)) + " " +
+		mark + t.team.Render(padRight(trunc(p.Name, nameW), nameW)) + " " +
 		t.faintText.Render(padRight(trunc(p.Pos, posW), posW))
 }
 
@@ -739,66 +942,9 @@ func (a *App) detailStatusLine(m model.Match) string {
 	}
 }
 
-// timelineLine renders one goal or card entry, attributed to the side that
-// committed it.
-func (a *App) timelineLine(e model.Event, m model.Match, w int) string {
-	t := a.theme
-	const minW, kindW, scoreW = 5, 9, 5
-	sideW := 6
-	playerW := maxInt(6, w-minW-kindW-scoreW-sideW-6)
-
-	detail := e.Kind.Label()
-	if e.Kind == model.EventGoal && e.Penalty {
-		detail = "PEN"
-	} else if e.Kind == model.EventGoal && e.OwnGoal {
-		detail = "OWN"
-	}
-
-	style := t.tlGoal
-	if !e.Kind.Scoring() {
-		style = t.tlCard
-	}
-
-	side := " "
-	switch e.TeamID {
-	case m.Home.ID:
-		side = "H"
-	case m.Away.ID:
-		side = "A"
-	}
-
-	return " " + t.tlMinute.Render(fit(trunc(e.Minute, minW), minW)) + " " +
-		t.tlKind.Render(fit(trunc(detail, kindW), kindW)) + " " +
-		t.dimmed.Render(fit(trunc(side, sideW), sideW)) + " " +
-		style.Render(padRight(trunc(e.Player, playerW), playerW)) + " " +
-		t.tlScore.Render(padLeft(trunc(e.Score, scoreW), scoreW))
-}
-
-// statLine renders one statistic with a proportional bar.
-func (a *App) statLine(s model.Stat, w int) string {
-	t := a.theme
-	const labelW, valW = 18, 6
-	barW := w - labelW - 2*valW - 4
-
-	label := fit(trunc(s.Label, labelW), labelW)
-	home := padLeft(trunc(s.Home, valW), valW)
-	away := padLeft(trunc(s.Away, valW), valW)
-
-	line := label + " " + home + " "
-	if barW > 6 {
-		total := s.HomeVal + s.AwayVal
-		ratio := 0.5
-		if total > 0 {
-			ratio = s.HomeVal / total
-		}
-		line += t.bar(ratio, barW) + " "
-	}
-	return line + away
-}
-
-// openMatch resolves the fixture the match page is showing. It is looked up by
+// openMatch resolves the fixture the match panel is showing. It is looked up by
 // key rather than by cursor position, so a background refresh that reshuffles
-// the list cannot silently swap the page onto a different match.
+// the list cannot silently swap the panel onto a different match.
 func (a *App) openMatch() (model.Match, bool) {
 	if a.detailKey != "" {
 		for _, m := range a.list {
@@ -818,61 +964,6 @@ func (a *App) openMatch() (model.Match, bool) {
 		return a.list[a.cursor], true
 	}
 	return model.Match{}, false
-}
-
-// matchPageFooter is the key hint line drawn under the match page. Hints that
-// do not fit the terminal are dropped whole rather than cut mid word.
-func (a *App) matchPageFooter() string {
-	t := a.theme
-	rows := []hint{
-		{"esc", "back"}, {"j k", "scroll"}, {"ctrl+d u", "half page"},
-		{"g G", "top bottom"}, {"s", "star"}, {"r", "refresh"}, {"q", "quit"},
-	}
-	parts := make([]string, 0, len(rows)*2)
-	line1 := ""
-	for i, h := range rows {
-		candidate := h.k + " " + h.d
-		if i > 0 {
-			candidate = "  " + candidate
-		}
-		if width(line1)+width(candidate) > a.width {
-			break
-		}
-		if i > 0 {
-			parts = append(parts, t.footerDim.Render("  "))
-		}
-		parts = append(parts, t.footerKey.Render(h.k), t.footer.Render(" "+h.d))
-		line1 += candidate
-	}
-	line1 = trunc(strings.Join(parts, ""), a.width)
-
-	prog := ""
-	if a.detailTotal > 0 && a.detailTo > 0 {
-		prog = fmt.Sprintf("  line %d-%d of %d", a.detailFrom, a.detailTo, a.detailTotal)
-	}
-	line2 := trunc(a.theme.footerDim.Render(strings.TrimSpace(
-		a.active.Name()+" · "+a.contextStatus()+prog)), a.width)
-	return lipgloss.JoinVertical(lipgloss.Left, line1, line2)
-}
-
-// contextStatus is the short "what am I looking at" line used on the page.
-func (a *App) contextStatus() string {
-	if a.detailLoading {
-		return "loading team sheets"
-	}
-	if a.detailErr != nil {
-		return "team sheets failed to load"
-	}
-	return a.detailStatusOf()
-}
-
-// detailStatusOf reports the state of the fixture the match page is showing.
-func (a *App) detailStatusOf() string {
-	m, ok := a.openMatch()
-	if !ok {
-		return ""
-	}
-	return m.StatusText
 }
 
 // ---- overlays -------------------------------------------------------------
@@ -964,11 +1055,11 @@ func (a *App) helpView() string {
 		{"j k  ↑ ↓", "move the selection"},
 		{"h l  ← →", "switch between Live, Upcoming, Results, Starred"},
 		{"1-4", "jump straight to a tab"},
-		{"⏎  i", "open the full-screen match page"},
-		{"g  gg  G", "top and bottom of the list or match page"},
+		{"⏎  i", "open the match panel beside the list"},
+		{"g  gg  G", "top and bottom of the list or panel"},
 		{"ctrl+f b", "page down and up"},
 		{"ctrl+d u", "half page down and up"},
-		{"pgup pgdn", "page the list or match page"},
+		{"pgup pgdn", "page the list or the panel"},
 		{"[  ]", "shift the upcoming/results window by a few days"},
 		{"/", "filter by team, competition or venue"},
 		{"s", "star or unstar the selected match"},
@@ -977,11 +1068,11 @@ func (a *App) helpView() string {
 		{"L", "choose which competitions to load"},
 		{"K", "set the API key for the current provider"},
 		{"?", "show or hide this help"},
-		{"q  esc", "close a page, or quit"},
+		{"q  esc", "close the panel, or quit"},
 	}
 
 	var b strings.Builder
-	b.WriteString(a.theme.panelTitle.Render("Keys") + "\n\n")
+	b.WriteString(a.theme.panelTitle.Render("Keys · v"+Version) + "\n\n")
 	for _, r := range rows {
 		b.WriteString("  " + a.theme.footerKey.Render(padRight(r[0], 18)) + a.theme.footer.Render(r[1]) + "\n")
 	}
@@ -1024,16 +1115,22 @@ func (a *App) hints() []hint {
 		return []hint{{"space", "toggle"}, {"enter", "apply"}, {"esc", "cancel"}}
 	case a.menu == menuKey:
 		return []hint{{"enter", "save"}, {"esc", "cancel"}}
+	case a.compact():
+		return []hint{
+			{"j k", "move"}, {"⏎", "details"}, {"/", "filter"},
+			{"h l", "tabs"}, {"?", "help"}, {"q", "quit"},
+		}
 	default:
 		return []hint{
-			{"j k", "move"}, {"⏎", "match page"}, {"/", "filter"}, {"s", "star"},
-			{"h l", "tabs"}, {"[ ]", "window"}, {"p", "provider"}, {"L", "leagues"},
-			{"r", "refresh"}, {"?", "help"}, {"q", "quit"},
+			{"j k", "move"}, {"⏎", "details"}, {"/", "filter"}, {"s", "star"},
+			{"h l", "tabs"}, {"[ ]", "window"}, {"r", "reload"}, {"?", "help"},
+			{"q", "quit"},
 		}
 	}
 }
 
-// footerView draws the key hints plus a contextual status line.
+// footerView draws the key hints plus a contextual status line. On a short
+// terminal the status line is dropped so the list keeps the rows.
 func (a *App) footerView() string {
 	t := a.theme
 	parts := make([]string, 0, len(a.hints())*2)
@@ -1043,10 +1140,12 @@ func (a *App) footerView() string {
 		}
 		parts = append(parts, t.footerKey.Render(h.k), t.footer.Render(" "+h.d))
 	}
-	line1 := strings.Join(parts, "")
-
-	line2 := a.theme.footerDim.Render(trunc(a.contextLine(), a.width))
-	return lipgloss.JoinVertical(lipgloss.Left, trunc(line1, a.width), line2)
+	line1 := trunc(strings.Join(parts, ""), a.width)
+	if a.cramped() {
+		return line1
+	}
+	line2 := t.footerDim.Render(trunc(a.contextLine(), a.width))
+	return lipgloss.JoinVertical(lipgloss.Left, line1, line2)
 }
 
 // contextLine summarises what is loaded and when it was last refreshed.

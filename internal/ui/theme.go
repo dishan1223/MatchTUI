@@ -98,8 +98,7 @@ func newTheme(scheme string) theme {
 
 	t.title = lipgloss.NewStyle().Bold(true).Foreground(t.accent)
 	t.chip = lipgloss.NewStyle().
-		Foreground(t.ink).Background(t.panel).
-		Padding(0, 1).Bold(true)
+		Foreground(t.muted).Padding(0, 1)
 	t.chipWarn = lipgloss.NewStyle().
 		Foreground(shade("#7A4400", "#2A1D05", scheme)).
 		Background(t.amber).Padding(0, 1)
@@ -108,9 +107,9 @@ func newTheme(scheme string) theme {
 		Background(t.crimson).Padding(0, 1)
 
 	t.tabOn = lipgloss.NewStyle().
-		Bold(true).Foreground(t.selInk).Background(t.selBg).Padding(0, 1)
+		Bold(true).Foreground(t.accent).Underline(true).Padding(0, 1)
 	t.tabOff = lipgloss.NewStyle().
-		Foreground(t.muted).Background(t.panel).Padding(0, 1)
+		Foreground(t.muted).Padding(0, 1)
 	t.tabCount = lipgloss.NewStyle().Faint(true)
 
 	t.group = lipgloss.NewStyle().Bold(true).Foreground(t.accent).Padding(0, 0, 0, 1)
@@ -144,7 +143,6 @@ func newTheme(scheme string) theme {
 	t.panelBox = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(t.line).
-		Background(t.panel).
 		Padding(0, 1)
 	t.panelTitle = lipgloss.NewStyle().Bold(true).Foreground(t.accent)
 
@@ -218,6 +216,17 @@ func (th theme) bar(ratio float64, w int) string {
 	filled := int(ratio*float64(w) + 0.5)
 	filled = clamp(filled, 0, w)
 	return th.barFill.Width(filled).Render("") + th.barEmpty.Width(w-filled).Render("")
+}
+
+// barMirror renders the same share as bar but filled from the right edge, so a
+// pair of bars reads as one measure split between the two teams.
+func (th theme) barMirror(ratio float64, w int) string {
+	if w <= 0 {
+		return ""
+	}
+	filled := int(ratio*float64(w) + 0.5)
+	filled = clamp(filled, 0, w)
+	return th.barEmpty.Width(w-filled).Render("") + th.barFill.Width(filled).Render("")
 }
 
 // joinNonEmpty joins parts with a separator, skipping empty ones.

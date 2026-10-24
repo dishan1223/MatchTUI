@@ -5,15 +5,19 @@ A terminal dashboard for football fixtures: **live scores**, **upcoming kick-off
 between without leaving the app.
 
 ```
-⚽ MatchTUI  v1.0.0                                                          ESPN
- Live 4   Upcoming 10   Results 24   Starred            Wed 21 Oct · 02:51 · 17-21 Oct
-  FT             AS Roma 4 - 0    S Bratislava   UEFA Champions Leag
-  FT            Man City 5 - 1    AEK Athens     UEFA Champions Leag
+⚽ MatchTUI                                                      ESPN
+ Live 4   Upcoming 10   Results 24   Starred   Wed 21 Oct · 02:51 · 17-21 Oct
+ Today · Wednesday 21 October
+  FT     AS Roma              4 - 0    S Bratislava    UCL · Stadio Olimpico
+  FT     Man City             5 - 1    AEK Athens      UCL · Etihad Stadium
  Yesterday · Tuesday 20 October
-  FT          Fenerbahce 2 - 2    Slavia Prague  UEFA Champions Leag
-  FT               Sabah 1 - 2    Dortmund       UEFA Champions Leag
+  FT     Fenerbahce           2 - 2    Slavia Prague   UCL · Sukru Saracoglu
+  FT     Sabah                1 - 2    Dortmund        UCL · Bank Respublika
  Monday 19 October
-  FT         Real Madrid 4 - 1    Sevilla        LALIGA · Santiago B
+  FT     Real Madrid          4 - 1    Sevilla         LALIGA · Santiago Bernabeu
+
+ ⏎ opens the fixture in a panel on the right, with the timeline split into a
+ column per team and the statistics mirrored around the centre.
 ```
 
 ## Screenshots
@@ -34,8 +38,8 @@ open one, then change the feed underneath it. Click any image for full size.
   </tr>
   <tr>
     <td width="50%" align="center">
-      <img src="images/match-details.png" width="100%" alt="Full-screen match page with pinned scoreboard, timeline, statistics and team sheets"><br>
-      <sub><b>Match page</b> &mdash; <code>&#9166;</code> opens a fixture full screen</sub>
+      <img src="images/match-details.png" width="100%" alt="Match panel with pinned scoreboard, two-column timeline, statistics and team sheets"><br>
+      <sub><b>Match panel</b> &mdash; <code>&#9166;</code> opens a fixture beside the list</sub>
     </td>
     <td width="50%" align="center">
       <img src="images/providers.png" width="100%" alt="Provider picker listing ESPN, OpenLigaDB, API-FOOTBALL and the offline demo"><br>
@@ -148,9 +152,9 @@ palette properly.
 | Key | Action |
 | --- | ------ |
 | `↑` `↓` or `j` `k` | move the selection |
-| `⏎` or `i` | open the full-screen match page |
+| `⏎` or `i` | open the match panel beside the list |
 | `h` `l`, `←` `→`, `tab`, `1`-`4` | switch between Live, Upcoming, Results and Starred |
-| `g` `gg`, `G` | jump to the top or bottom of the list or match page |
+| `g` `gg`, `G` | jump to the top or bottom of the list or panel |
 | `ctrl+d` `ctrl+u` | half a page down or up |
 | `ctrl+f` `ctrl+b`, `pgup` `pgdn` | a full page down or up |
 | `[` `]` | shift the upcoming/results window a few days further or back |
@@ -161,12 +165,12 @@ palette properly.
 | `L` | choose which competitions to load |
 | `K` | set the API key for the current provider |
 | `?` | show or hide the help overlay |
-| `esc` | close the match page, or clear the filter |
-| `q` | close the match page, or quit |
+| `esc` | close the match panel, or clear the filter |
+| `q` | close the match panel, or quit |
 
 Movement keys follow vim: `j` and `k` move, `gg` and `G` jump, and `ctrl+d`/`ctrl+u`
 scroll by half a page. Whichever window has focus owns them, so scrolling the
-match page never moves the list underneath it.
+match panel never moves the list underneath it.
 
 
 ## Behaviour
@@ -177,8 +181,16 @@ match page never moves the list underneath it.
   move with `[` and `]`. They are cached for five minutes.
 - **Starred** collects every match you press `s` on, and the list is persisted,
   so it survives a restart.
-- The match page stays pinned to the fixture you opened even if a refresh
-  reshuffles the list underneath it.
+- Pressing `⏎` opens the fixture in a **side panel** on the right, about two
+  thirds of the screen wide; the list stays visible and usable beside it. `esc`
+  puts it away again. The panel stays pinned to the fixture you opened even if a
+  refresh reshuffles the list underneath it.
+- Inside the panel the two sides get a column each: the timeline is split home
+  left and away right, statistics put each team's value on its own edge with
+  mirrored bars in between, and the team sheets stand side by side.
+- The layout adapts to the terminal. Narrow terminals (a phone running Termux,
+  for instance) drop the competition column from the list and give the panel the
+  whole width; short terminals drop the status line so the list keeps its rows.
 - Every frame is clipped to the terminal size, so resizing mid-flight never
   leaves artefacts.
 
